@@ -35,8 +35,17 @@ shared_examples 'simple crud for index' do
         end
 
         it 'renders the correct models' do
-          expect(response_body['page'].map {|a| a['id']}).to eq(model_class_object.all.map(&:id))
+          byebug
+          expect(response_body['page'].map { |a| a['id'] }).to eq(model_class_object.all.map(&:id))
         end
+
+        if check_filter(:index)
+          it 'renders the filtered models' do
+            expect(model_class_object).to receive(:filter)
+            get :index
+          end
+        end
+
       else
         it 'renders models correctly serialized' do
           ### TODO: fix
@@ -44,8 +53,15 @@ shared_examples 'simple crud for index' do
         end
 
         it 'renders the correct models' do
-          ids = response_body['page'].map { |a| a['id'] }
+          ids = response_body.map { |a| a['id'] }
           expect(ids).to eq(model_class_object.all.map(&:id).take(ids.count))
+        end
+
+        if check_filter(:index)
+          it 'renders the filtered models' do
+            expect_any_instance_of(model_class_object).to receive(:filter)
+            get :index
+          end
         end
       end
     end

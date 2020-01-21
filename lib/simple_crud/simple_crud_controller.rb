@@ -1,29 +1,38 @@
 require 'byebug'
 require 'active_support/all'
+require_relative 'valid_method_checker'
+require_relative 'policy_checker'
+require_relative 'serializer_checker'
 module SimpleCrudController
   cattr_accessor :params, :permitted
+
+  def simple_crud(all_parameters = {})
+    all_methods = %i[show index destroy create update]
+    methods_to_create = all_parameters[:only] || all_methods - [all_parameters[:except]]
+    methods_to_create.each do |method|
+      simple_crud_for(method, all_parameters.except(:only, :except))
+    end
+  end
 
   # Possible options:
   ### authorize: use pundit to automatically check for authorization
   ### paginate: use wor-paginate to paginate the list
   ### authenticate: use devise to authenticate
   ### serializer: use a particular serializer (both each_serializer and serializer)
+  ### filter: use toscha-filterable to filter
   def simple_crud_for(method, parameters = {})
     parameters = set_parameters(parameters)
     klass = simple_crud_controller_model
-    check_valid_method(method)
-    check_policies(parameters)
-    check_serializer(parameters)
+    ValidMethodChecker.new.check(method)
+    PolicyChecker.new.check(parameters, simple_crud_controller_model)
+    SerializerChecker.new.check(parameters)
     define_method(method, send("crud_lambda_for_#{method}", klass, parameters))
     write_metadata(method, parameters)
   end
 
   def set_parameters(parameters)
-    defaults = { authorize: true, paginate: true, authenticate: true, serializer: nil }
-    defaults.each do |key, value|
-      parameters[key] = value unless parameters.key?(key)
-    end
-    parameters
+    parameters.with_defaults(authorize: true, paginate: true, authenticate: true,
+                             serializer: nil, filter: true)
   end
 
   def write_metadata(method, parameters)
@@ -42,15 +51,18 @@ module SimpleCrudController
     end
   end
 
-  def crud_lambda_for_index(klass, parameters = {})
+  def crud_lambda_for_index(query, parameters = {})
     lambda do
       authenticate_user! if parameters[:authenticate]
-      authorize klass.new if parameters[:authorize]
+      authorize query.new if parameters[:authorize]
       paginate = parameters[:paginate]
       serializer = parameters[:serializer]
       options = {}.merge(each_serializer: serializer).compact
-
-      paginate ? (render_paginated klass, options) : render({ json: klass.all }.merge(options))
+      if parameters[:filter]
+        byebug
+        query = query.filter(send("#{self.class.simple_crud_controller_model.to_s.underscore}_filters"))
+      end
+      paginate ? (render_paginated query, options) : render({ json: query.all }.merge(options))
     end
   end
 
@@ -84,27 +96,5 @@ module SimpleCrudController
 
   def simple_crud_controller_model
     to_s.split('::').last.sub('Controller', '').singularize.classify.constantize
-  end
-
-  def check_valid_method(method)
-    throw 'invalid method' unless %i[show index create update destroy].include? method
-  end
-
-  def check_policies(parameters)
-    return if !parameters.key?(:authorize) || !parameters[:authorize]
-
-    policy_name = "#{simple_crud_controller_model}Policy"
-    return if Kernel.const_defined?(policy_name)
-
-    throw "create a valid policy with name #{policy_name}"
-  end
-
-  def check_serializer(parameters)
-    return if parameters[:serializer].blank?
-
-    serializer_name = parameters[:serializer].to_s
-    return if Kernel.const_defined?(serializer_name)
-
-    throw "create a valid serializer with name #{serializer_name}"
   end
 end
